@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,9 +25,41 @@ type App struct {
 	bottomBarLeft  *tview.TextView
 	bottomBarRight *tview.TextView
 	currentDir     string
+	selectedPaths  map[string]int
 }
 
 // creating new application
+
+func (a *App) updateSelectedPaths() {
+	split_paths := strings.Split(a.currentDir, "/")
+	for i, path := range split_paths {
+		current_path := strings.Join(split_paths[:i], "/")
+		if i == 0 {
+			current_path = "/"
+			path = "home"
+		}
+
+		dirs, _, _ := GetEntries(current_path)
+
+		var info []string
+		for _, dir := range dirs {
+			info = append(info, dir.Info.Name())
+		}
+
+		index := slices.Index(info, path)
+
+		if index == -1 {
+			continue
+		}
+
+		if path == "" {
+			index = slices.Index(info, "home")
+		}
+
+		a.selectedPaths[current_path] = index
+	}
+
+}
 
 func NewApp() *App {
 	a := &App{
@@ -38,6 +71,9 @@ func NewApp() *App {
 	if err != nil {
 		log.Fatal(err)
 	}
+	a.selectedPaths = make(map[string]int)
+	a.updateSelectedPaths()
+
 	// ui setup
 	a.setupUI()
 	// set event handlers
@@ -51,6 +87,8 @@ func NewApp() *App {
 
 func (a *App) Run() error {
 	a.tviewApp.SetRoot(a.pages, true)
+	a.tviewApp.EnableMouse(true)
+
 	return a.tviewApp.Run()
 }
 
@@ -132,6 +170,7 @@ func (a *App) updateMiddlePane() {
 		log.Printf("Error reading directory %s: %v", a.currentDir, err)
 		return
 	}
+	// a.middlePane.SetCurrentItem(a.selectedPaths[a.currentDir])
 
 	if len(directories)+len(files) == 0 {
 		a.middlePane.SetTitle("[red]Current (Empty)[/]")
@@ -157,13 +196,17 @@ func (a *App) updateMiddlePane() {
 }
 
 func (a *App) updatePanes() {
+	a.rightPane.SetText("")
+
 	// update left panes
 	a.updateLeftPane()
 	// update middle pane
 	a.updateMiddlePane()
 
 	a.updateBottomBarInfo()
-	a.rightPane.SetText("")
+
+	a.middlePane.SetCurrentItem(a.selectedPaths[a.currentDir])
+
 }
 
 func (a *App) updateBottomBarInfo() {
@@ -189,7 +232,7 @@ func (a *App) updateBottomBarInfo() {
 
 	file_mode := fileInfo.Mode().String()
 	modified_time := fileInfo.ModTime().Format("2006-01-02 15:04:05")
-	a.bottomBarLeft.SetText(file_mode + " " + fileOwner + " " + modified_time)
+	a.bottomBarLeft.SetText(file_mode + " " + fileOwner + " " + modified_time + "(" + fileInfo.Name() + ")")
 
 	diskInfo, _ := GetDiskInfo("/")
 	total_items := strconv.Itoa(a.middlePane.GetItemCount())
@@ -248,13 +291,17 @@ func (a *App) setEventHandlers() {
 			}
 		}
 
+		index := a.middlePane.GetCurrentItem()
 		switch event.Rune() {
 		case 'j':
-			// tview handles this, but we could override
-			a.middlePane.SetCurrentItem(a.middlePane.GetCurrentItem() + 1)
+			a.middlePane.SetCurrentItem(index + 1)
+			a.selectedPaths[a.currentDir] = index + 1
+			a.preview()
 			return event
 		case 'k':
-			a.middlePane.SetCurrentItem(a.middlePane.GetCurrentItem() - 1)
+			a.middlePane.SetCurrentItem(index - 1)
+			a.selectedPaths[a.currentDir] = index - 1
+			a.preview()
 			return event
 		case 'h':
 			a.goUpDirectory()
@@ -289,7 +336,7 @@ func (a *App) preview() {
 	newPath := filepath.Join(a.currentDir, cleanedItem)
 	fileInfo, err := os.Stat(newPath)
 	if err != nil {
-		return // Can't stat, do nothing
+		return
 	}
 
 	if fileInfo.IsDir() {
@@ -322,20 +369,11 @@ func (a *App) preview() {
 	}
 }
 
-// Function to get the item name without TUI color tags or trailing slashes
-func getCleanedItemName(item string) string {
-	cleanedItem := strings.TrimSuffix(item, "/")
-	cleanedItem = strings.ReplaceAll(cleanedItem, "[darkcyan]", "")
-	cleanedItem = strings.ReplaceAll(cleanedItem, "[white]", "")
-	return strings.TrimSpace(cleanedItem)
-}
-
 // navigateOrShowFile navigates into a directory or shows file content.
 func (a *App) navigateOrShowFile(item string) {
 	cleanedItem := getCleanedItemName(item)
 	newPath := filepath.Join(a.currentDir, cleanedItem)
 	fileInfo, err := os.Stat(newPath)
-
 	if err != nil {
 		log.Printf("Error stating file: %v", err)
 		return

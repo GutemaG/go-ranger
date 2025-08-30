@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -72,4 +73,12 @@ func formatBytes(bytes uint64) string {
 
 	units := []string{"KB", "MB", "GB", "TB", "PB", "EB"}
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
+}
+
+// Function to get the item name without TUI color tags or trailing slashes
+func getCleanedItemName(item string) string {
+	cleanedItem := strings.TrimSuffix(item, "/")
+	cleanedItem = strings.ReplaceAll(cleanedItem, "[darkcyan]", "")
+	cleanedItem = strings.ReplaceAll(cleanedItem, "[white]", "")
+	return strings.TrimSpace(cleanedItem)
 }
