@@ -2,90 +2,83 @@ package pkg
 
 import (
 	"fmt"
-	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+
+	"github.com/rivo/tview"
 )
 
-// FileEntry is exported for use in the tui package.
-type FileEntry struct {
-	os.DirEntry
-	Info   os.FileInfo
-	Size   int64
-	Count  int
-	IsFile bool
+func (a *App) addNewFile() {
+	var fileName string
+	form := tview.NewForm().
+		AddInputField("Name (add '/' for directory)", "", 20, nil, func(text string) {
+			fileName = text
+		}).
+		AddButton("Create", func() {
+			if fileName != "" {
+				filePath := filepath.Join(a.currentDir, fileName)
+				var err error
+				if strings.HasSuffix(fileName, "/") {
+					err = os.MkdirAll(filePath, 0755)
+				} else {
+					var file *os.File
+					file, err = os.Create(filePath)
+					if err == nil {
+						file.Close()
+					}
+				}
+				if err != nil {
+					log.Printf("Error creating entry %s: %v", filePath, err)
+				} else {
+					a.updatePanes()
+				}
+			}
+			a.pages.SwitchToPage("main")
+			a.tviewApp.SetFocus(a.middlePane)
+		}).
+		AddButton("Cancel", func() {
+			a.pages.SwitchToPage("main")
+			a.tviewApp.SetFocus(a.middlePane)
+		})
+
+	form.SetBorder(true).SetTitle("Add New File/Directory").SetTitleAlign(tview.AlignCenter)
+
+	a.pages.AddPage("addFile", form, true, true)
+	a.tviewApp.SetFocus(form)
 }
 
-// getDirSizeAndCount recursively calculates the total size and element count of a directory.
-func getDirSizeAndCount(path string) (int64, int, error) {
-	var totalSize int64
-	var count int
-	err := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if p == path {
-			return nil // Skip the directory itself
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		totalSize += info.Size()
-		count++
-		return nil
-	})
-	return totalSize, count, err
-}
-
-// GetEntries reads a directory and returns sorted lists of directories and files.
-func GetEntries(path string) ([]FileEntry, []FileEntry, error) {
-	entries, err := os.ReadDir(path)
+func (a *App) deleteFile(item string) {
+	cleanedItem := getCleanedItemName(item)
+	path := filepath.Join(a.currentDir, cleanedItem)
+	fileInfo, err := os.Stat(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error reading directory %s: %w", path, err)
+		log.Printf("Error stating file: %v", err)
+		return
 	}
 
-	var directories []FileEntry
-	var files []FileEntry
-
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			continue // Skip files we can't get info for
-		}
-		fileEntry := FileEntry{DirEntry: entry, Info: info}
-		if entry.IsDir() {
-			directories = append(directories, fileEntry)
-		} else {
-			files = append(files, fileEntry)
-		}
+	modalText := fmt.Sprintf("Are you sure you want to delete '%s'?", cleanedItem)
+	if fileInfo.IsDir() {
+		modalText = fmt.Sprintf("Are you sure you want to delete the directory '%s' and its contents?", cleanedItem)
 	}
 
-	// Sort directories and files alphabetically
-	sort.Slice(directories, func(i, j int) bool { return directories[i].Name() < directories[j].Name() })
-	sort.Slice(files, func(i, j int) bool { return files[i].Name() < files[j].Name() })
+	modal := tview.NewModal().
+		SetText(modalText).
+		AddButtons([]string{"Yes", "No"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			if buttonLabel == "Yes" {
+				err := os.RemoveAll(path)
+				if err != nil {
+					log.Printf("Error deleting file: %v", err)
+				} else {
+					a.updatePanes()
+				}
+			}
+			a.pages.SwitchToPage("main")
+			a.tviewApp.SetFocus(a.middlePane)
+		})
 
-	return directories, files, nil
-}
-
-// CreateEntry creates a new file or directory.
-func CreateEntry(path string, isDir bool) error {
-	if isDir {
-		return os.MkdirAll(path, 0755)
-	}
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	return file.Close()
-}
-
-// GetCleanedItemName removes TUI formatting from a string.
-func GetCleanedItemName(item string) string {
-	cleanedItem := strings.TrimSuffix(item, "/")
-	cleanedItem = strings.ReplaceAll(cleanedItem, "[darkcyan]", "")
-	cleanedItem = strings.ReplaceAll(cleanedItem, "[white]", "")
-	return strings.TrimSpace(cleanedItem)
+	a.pages.AddPage("deleteConfirm", modal, true, true)
+	a.tviewApp.SetFocus(modal)
 }
